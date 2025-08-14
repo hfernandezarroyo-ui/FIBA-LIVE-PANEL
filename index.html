@@ -5,73 +5,205 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FIBA Live Panel — Ultra Seguro</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
+    .card { border-radius: 14px; box-shadow: 0 8px 20px rgba(0,0,0,.07); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-800">
-  <div class="max-w-4xl mx-auto p-4">
-    <h1 class="text-2xl font-bold mb-4">FIBA Live Panel — Ultra Seguro</h1>
-    <input id="apiKey" type="password" placeholder="Pega tu X-RapidAPI-Key" class="px-3 py-2 border rounded w-full mb-3" />
-    <button id="saveKey" class="bg-blue-600 text-white px-4 py-2 rounded">Guardar clave</button>
-    <div id="status" class="mt-3 text-sm text-gray-600">—</div>
-    <div id="list" class="mt-4 space-y-3"></div>
-  </div>
-<script>
-const HOST = "api-basketball.p.rapidapi.com";
-const keyInput = document.getElementById('apiKey');
-const saveBtn = document.getElementById('saveKey');
-const statusEl = document.getElementById('status');
-const listEl = document.getElementById('list');
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-5xl mx-auto p-4 md:p-6">
+    <header class="mb-4 md:mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold">FIBA Live Panel — Ultra Seguro</h1>
+        <p class="text-slate-600 text-sm">Partidos en directo + señal “ENTRA / ESPERA”.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <input id="apiKey" type="text" placeholder="Pega tu X-RapidAPI-Key" class="px-3 py-2 rounded-lg border w-72" />
+        <button id="saveKey" class="px-4 py-2 rounded-lg bg-black text-white">Guardar clave</button>
+      </div>
+    </header>
 
-keyInput.value = localStorage.getItem('RAPID_KEY') || "";
-saveBtn.onclick = () => {
-  localStorage.setItem('RAPID_KEY', keyInput.value.trim());
-  saveBtn.textContent = "Guardada ✓";
-  setTimeout(() => saveBtn.textContent = "Guardar clave", 1500);
-  fetchLive();
+    <section class="card bg-white p-3 md:p-4 mb-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" id="onlyFIBA" checked /> Solo FIBA/Internacionales
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
+        </label>
+        <div class="flex items-center gap-2 text-sm">
+          <span>Refresco</span>
+          <select id="refresh" class="border rounded px-2 py-1">
+            <option value="8">8s</option>
+            <option value="10" selected>10s</option>
+            <option value="15">15s</option>
+            <option value="20">20s</option>
+          </select>
+        </div>
+        <span id="status" class="text-sm text-slate-500">—</span>
+      </div>
+      <div id="debug" class="mt-2 text-xs text-slate-500"></div>
+    </section>
+
+    <section id="list" class="space-y-3"></section>
+  </div>
+
+<script>
+// guarda clave desde ?key= por si no te deja pegar
+(function () {
+  try {
+    const qs = new URLSearchParams(location.search);
+    const k = qs.get("key") || qs.get("apikey") || qs.get("k");
+    if (k && k.length > 10) {
+      localStorage.setItem("RAPID_KEY", k.trim());
+      history.replaceState({}, "", location.origin + location.pathname);
+    }
+  } catch (_) {}
+})();
+
+const HOST = "api-basketball.p.rapidapi.com";
+const dom = {
+  key: document.getElementById('apiKey'),
+  saveKey: document.getElementById('saveKey'),
+  onlyFIBA: document.getElementById('onlyFIBA'),
+  ultraSafe: document.getElementById('ultraSafe'),
+  refresh: document.getElementById('refresh'),
+  status: document.getElementById('status'),
+  debug: document.getElementById('debug'),
+  list: document.getElementById('list'),
 };
 
-function signal(game){
-  const q = game.periods?.current;
-  const timer = game.status?.timer || "";
-  const th = game.scores?.home?.total ?? 0;
-  const ta = game.scores?.away?.total ?? 0;
-  const diff = Math.abs(th - ta);
-  const pts = th + ta;
+function dbg(msg){ dom.debug.textContent = msg; }
+function setStatus(msg){ dom.status.textContent = msg; }
+
+// carga/guarda clave
+dom.key.value = localStorage.getItem('RAPID_KEY') || "";
+dom.saveKey.onclick = () => {
+  localStorage.setItem('RAPID_KEY', dom.key.value.trim());
+  dom.saveKey.textContent = "Guardada ✓";
+  setTimeout(() => dom.saveKey.textContent = "Guardar clave", 1200);
+  refreshNow();
+};
+
+// señal ultra segura
+function signal(g, ultra=true){
+  const q = g.periods?.current || null;
+  const t = g.status?.timer || "";
+  const [mm,ss] = (t||"").split(":").map(x=>parseInt(x||"0",10));
+  const h = g.scores?.home?.total ?? 0;
+  const a = g.scores?.away?.total ?? 0;
+  const diff = Math.abs(h-a);
+  const pts = h + a;
   const fast = pts >= 150;
-  if (q !== 4) return {tag:"ESPERA", reason:"Solo Q4"};
-  const [mm,ss] = timer.split(":").map(x=>parseInt(x||"0"));
-  if (mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
+
+  const short = (g.status?.short||"").toUpperCase();
+  if (!(q===4 || short==="OT")) return {tag:"ESPERA", reason:"Solo Q4/OT"};
+  if (!isNaN(mm) && mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
   const need = fast ? 12 : 10;
   if (diff >= need) return {tag:"ENTRA", reason:`Ventaja ${diff} (${fast?"rápido":"lento"})`};
   return {tag:"ESPERA", reason:`Ventaja ${diff} < ${need}`};
 }
 
+function isFIBA(league, country){
+  const L = (league||"").toLowerCase();
+  const C = (country||"").toLowerCase();
+  return L.includes("fiba") || C.includes("international") || C.includes("world");
+}
+
+function row(g){
+  const h = g.scores?.home?.total ?? 0;
+  const a = g.scores?.away?.total ?? 0;
+  const s = signal(g, dom.ultraSafe.checked);
+  const sigColor = s.tag==="ENTRA" ? "bg-emerald-600" : s.tag==="ESPERA" ? "bg-amber-600" : "bg-slate-600";
+  const period = g.periods?.current ? `Q${g.periods.current}` : (g.status?.short || g.status?.long || "");
+  return `<div class="card p-3 bg-white">
+    <div class="grid md:grid-cols-6 gap-2 items-center">
+      <div class="md:col-span-2">
+        <div class="text-xs text-slate-500">${(g.country?.name||g.league?.country||"").toUpperCase()}</div>
+        <div class="font-semibold">${g.league?.name||""}</div>
+      </div>
+      <div>
+        <div class="font-semibold">${g.teams?.home?.name||""}</div>
+        <div class="text-slate-600">${g.teams?.away?.name||""}</div>
+      </div>
+      <div class="text-center">
+        <div class="text-2xl font-bold mono">${h} - ${a}</div>
+      </div>
+      <div class="text-sm">
+        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Período</span> <span class="mono">${period}</span></div>
+        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Reloj</span> <span class="mono">${g.status?.timer || "-"}</span></div>
+      </div>
+      <div>
+        <span class="inline-block px-2 py-1 rounded text-white ${sigColor}">${s.tag}</span>
+        <div class="text-slate-700 text-sm mt-1">${s.reason}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 async function fetchLive(){
   const key = (localStorage.getItem('RAPID_KEY') || "").trim();
-  if (!key) { statusEl.textContent = "Pega tu X-RapidAPI-Key"; return; }
-  statusEl.textContent = "Actualizando…";
+  if (!key){ setStatus("Pega tu X-RapidAPI-Key y pulsa Guardar."); dom.list.innerHTML=""; return []; }
+  const url = `https://${HOST}/games?live=all`;
+  const r = await fetch(url, { headers: {
+    "X-RapidAPI-Key": key, "X-RapidAPI-Host": HOST, "Accept":"application/json"
+  }});
+  if (!r.ok){
+    const t = await r.text().catch(()=> "");
+    throw new Error(`RapidAPI ${r.status}: ${t.slice(0,180)}`);
+  }
+  const j = await r.json();
+  return Array.isArray(j?.response) ? j.response : [];
+}
+
+async function refreshNow(){
+  const start = Date.now();
   try{
-    const r = await fetch(`https://${HOST}/games?live=all`, {
-      headers: {"X-RapidAPI-Key": key, "X-RapidAPI-Host": HOST}
-    });
-    const j = await r.json();
-    let games = (j.response || []).filter(g => (g.league?.name||"").toLowerCase().includes("fiba"));
-    listEl.innerHTML = games.map(g => {
-      const s = signal(g);
-      return `<div class="p-3 border rounded">
-        <div class="font-bold">${g.league?.name}</div>
-        <div>${g.teams?.home?.name} vs ${g.teams?.away?.name}</div>
-        <div>${g.scores?.home?.total} - ${g.scores?.away?.total}</div>
-        <div>Periodo: Q${g.periods?.current} — Reloj: ${g.status?.timer}</div>
-        <div><strong>${s.tag}</strong>: ${s.reason}</div>
+    setStatus("Actualizando…");
+    let games = await fetchLive();
+    dbg(`Total live recibidos: ${games.length}`);
+    if (dom.onlyFIBA.checked){
+      games = games.filter(g => isFIBA(g.league?.name, g.country?.name || g.league?.country));
+    }
+    if (!games.length){
+      dom.list.innerHTML = `<div class="text-center text-slate-600 py-6">
+        No hay partidos en vivo para el filtro actual.
+        <button id="showAll" class="ml-2 underline">Ver todos</button>
       </div>`;
-    }).join("");
-    statusEl.textContent = `Última actualización: ${new Date().toLocaleTimeString()}`;
-  }catch(err){
-    statusEl.textContent = "Error: " + err;
+      const btn = document.getElementById('showAll');
+      if (btn) btn.onclick = () => { dom.onlyFIBA.checked = false; refreshNow(); };
+    } else {
+      dom.list.innerHTML = games.map(g => {
+        // normalizado mínimo
+        g.status = g.status || {}; g.periods = g.periods || {}; g.scores = g.scores || {};
+        return row(g);
+      }).join("");
+    }
+    const ms = Date.now()-start;
+    setStatus(`Última actualización: ahora · ${games.length} partidos · ${ms} ms`);
+  } catch(err){
+    dom.list.innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
+      <div class="font-semibold">Error cargando datos</div>
+      <div class="text-sm mt-1 mono">${(err && err.message) || err}</div>
+      <div class="text-xs mt-1 text-red-600">Comprueba tu X-RapidAPI-Key o tu límite del plan.</div>
+    </div>`;
+    setStatus("Error");
   }
 }
-fetchLive();
-setInterval(fetchLive, 10000);
+
+let timer = null;
+function startLoop(){
+  if (timer) clearInterval(timer);
+  const s = Math.max(5, parseInt(dom.refresh.value||"10",10))*1000;
+  timer = setInterval(refreshNow, s);
+}
+dom.refresh.onchange = startLoop;
+dom.onlyFIBA.onchange = refreshNow;
+dom.ultraSafe.onchange = refreshNow;
+
+dom.key.value && refreshNow();
+startLoop();
 </script>
 </body>
 </html>
