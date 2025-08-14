@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FIBA Live Panel — Manual</title>
+  <title>Basket Live — Bet365 / API-Basketball (Manual)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
@@ -13,14 +13,18 @@
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
-  <div class="max-w-5xl mx-auto p-4 md:p-6">
+  <div class="max-w-6xl mx-auto p-4 md:p-6">
     <header class="mb-4 md:mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
       <div>
-        <h1 class="text-2xl md:text-3xl font-bold">FIBA Live Panel — Manual</h1>
-        <p class="text-slate-600 text-sm">Pulsa “Actualizar ahora” para pedir datos (atajo: tecla <b>R</b>).</p>
+        <h1 class="text-2xl md:text-3xl font-bold">Basket Live — Bet365 / API-Basketball</h1>
+        <p class="text-slate-600 text-sm">Actualización manual. Selector de proveedor. Señal ENTRA/ESPERA (ultra segura).</p>
       </div>
-      <div class="flex items-center gap-2">
-        <input id="apiKey" type="text" placeholder="Pega tu X-RapidAPI-Key" class="px-3 py-2 rounded-lg border w-72" />
+      <div class="flex flex-wrap items-center gap-2">
+        <select id="provider" class="px-3 py-2 rounded-lg border">
+          <option value="betsapi" selected>BetsAPI (Bet365)</option>
+          <option value="apisports">API-Basketball (RapidAPI)</option>
+        </select>
+        <input id="apiKey" type="text" placeholder="Pega tu TOKEN/KEY según proveedor" class="px-3 py-2 rounded-lg border w-72" />
         <button id="saveKey" type="button" class="btn bg-black text-white">Guardar clave</button>
       </div>
     </header>
@@ -34,7 +38,7 @@
           <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
         </label>
         <button id="manualRefresh" type="button" class="btn bg-emerald-600 text-white">🔄 Actualizar ahora</button>
-        <span id="status" class="text-sm text-slate-500">Listo. Pulsa “Guardar clave”.</span>
+        <span id="status" class="text-sm text-slate-500">Listo. Selecciona proveedor, pega clave y pulsa “Guardar clave”.</span>
       </div>
       <div id="debug" class="mt-2 text-xs text-slate-500"></div>
     </section>
@@ -43,159 +47,40 @@
   </div>
 
 <script>
-// ===== Helper de errores globales para verlos en pantalla =====
-(function(){
-  const q = (sel)=>document.querySelector(sel);
-  window._dbg = (m)=>{ const el=q('#debug'); if(el) el.textContent = String(m); };
-  window.addEventListener('error', e=>{ _dbg('JS error: '+(e.message||e.error||e)); });
-  window.addEventListener('unhandledrejection', e=>{ _dbg('Promise error: '+(e.reason||e)); });
-})();
+/* ===== Helpers de estado/errores ===== */
+const dom = {
+  provider: document.getElementById('provider'),
+  key: document.getElementById('apiKey'),
+  saveKey: document.getElementById('saveKey'),
+  onlyFIBA: document.getElementById('onlyFIBA'),
+  ultraSafe: document.getElementById('ultraSafe'),
+  manual: document.getElementById('manualRefresh'),
+  status: document.getElementById('status'),
+  debug: document.getElementById('debug'),
+  list: document.getElementById('list'),
+};
+const setStatus = (m)=> dom.status.textContent = m;
+const dbg = (m)=> dom.debug.textContent = String(m||'');
 
-// ===== App =====
-document.addEventListener('DOMContentLoaded', () => {
-  // guarda clave desde ?key= si viene por URL
-  try {
-    const qs = new URLSearchParams(location.search);
-    const k = qs.get("key") || qs.get("apikey") || qs.get("k");
-    if (k && k.length > 10) {
-      localStorage.setItem("RAPID_KEY", k.trim());
-      history.replaceState({}, "", location.origin + location.pathname);
-    }
-  } catch {}
+/* ===== Persistencia de proveedor + clave ===== */
+function storageKeyForProvider(p){ return p === 'betsapi' ? 'KEY_BETSAPI' : 'KEY_APISPORTS'; }
+function loadKey(){
+  const p = dom.provider.value;
+  const k = localStorage.getItem(storageKeyForProvider(p)) || '';
+  dom.key.value = k;
+}
+function saveKey(){
+  const p = dom.provider.value;
+  localStorage.setItem(storageKeyForProvider(p), (dom.key.value||'').trim());
+  setStatus('Clave guardada ✓');
+}
 
-  const HOST = "api-basketball.p.rapidapi.com";
-  const dom = {
-    key: document.getElementById('apiKey'),
-    saveKey: document.getElementById('saveKey'),
-    onlyFIBA: document.getElementById('onlyFIBA'),
-    ultraSafe: document.getElementById('ultraSafe'),
-    status: document.getElementById('status'),
-    debug: document.getElementById('debug'),
-    list: document.getElementById('list'),
-    manual: document.getElementById('manualRefresh'),
-  };
-  const setStatus = (m)=> dom.status.textContent = m;
-  const dbg = (m)=> dom.debug.textContent = String(m||'');
+/* ===== Señal (ultra segura) ===== */
+function signal(g, ultra=true){
+  const q = g.periods?.current || null;
+  const t = g.status?.timer || "";
+  const [mm] = (t||"").split(":").map(x=>parseInt(x||"0",10));
+  const h = g.scores?.home?.total ?? 0;
+  const a = g.scores?.away?.total ?? 0;
+  const di
 
-  // cargar clave previa
-  dom.key.value = localStorage.getItem('RAPID_KEY') || "";
-
-  // click Guardar clave
-  dom.saveKey.addEventListener('click', () => {
-    const val = (dom.key.value||'').trim();
-    if (!val) { setStatus('Pon tu X-RapidAPI-Key primero'); return; }
-    localStorage.setItem('RAPID_KEY', val);
-    setStatus('Clave guardada ✓');
-  });
-
-  // atajo R = actualizar
-  window.addEventListener('keydown', e => {
-    if ((e.key||'').toLowerCase()==='r') dom.manual.click();
-  });
-
-  function isFIBA(league, country){
-    const L = (league||"").toLowerCase();
-    const C = (country||"").toLowerCase();
-    return L.includes("fiba") || C.includes("international") || C.includes("world");
-  }
-
-  function signal(g, ultra=true){
-    const q = g.periods?.current || null;
-    const t = g.status?.timer || "";
-    const [mm] = (t||"").split(":").map(x=>parseInt(x||"0",10));
-    const h = g.scores?.home?.total ?? 0;
-    const a = g.scores?.away?.total ?? 0;
-    const diff = Math.abs(h-a);
-    const pts = h + a;
-    const fast = pts >= 150;
-    const short = (g.status?.short||"").toUpperCase();
-    if (!(q===4 || short==="OT")) return {tag:"ESPERA", reason:"Solo Q4/OT"};
-    if (!isNaN(mm) && mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
-    const need = fast ? 12 : 10;
-    if (diff >= need) return {tag:"ENTRA", reason:`Ventaja ${diff} (${fast?"rápido":"lento"})`};
-    return {tag:"ESPERA", reason:`Ventaja ${diff} < ${need}`};
-  }
-
-  function row(g){
-    const h = g.scores?.home?.total ?? 0;
-    const a = g.scores?.away?.total ?? 0;
-    const s = signal(g, dom.ultraSafe.checked);
-    const sigColor = s.tag==="ENTRA" ? "bg-emerald-600" : s.tag==="ESPERA" ? "bg-amber-600" : "bg-slate-600";
-    const period = g.periods?.current ? `Q${g.periods.current}` : (g.status?.short || g.status?.long || "");
-    return `<div class="card p-3 bg-white">
-      <div class="grid md:grid-cols-6 gap-2 items-center">
-        <div class="md:col-span-2">
-          <div class="text-xs text-slate-500">${(g.country?.name||g.league?.country||"").toUpperCase()}</div>
-          <div class="font-semibold">${g.league?.name||""}</div>
-        </div>
-        <div>
-          <div class="font-semibold">${g.teams?.home?.name||""}</div>
-          <div class="text-slate-600">${g.teams?.away?.name||""}</div>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-bold mono">${h} - ${a}</div>
-        </div>
-        <div class="text-sm">
-          <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Período</span> <span class="mono">${period}</span></div>
-          <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Reloj</span> <span class="mono">${g.status?.timer || "-"}</span></div>
-        </div>
-        <div>
-          <span class="inline-block px-2 py-1 rounded text-white ${sigColor}">${s.tag}</span>
-          <div class="text-slate-700 text-sm mt-1">${s.reason}</div>
-        </div>
-      </div>
-    </div>`;
-  }
-
-  async function fetchLive(){
-    const key = (localStorage.getItem('RAPID_KEY') || "").trim();
-    if (!key){ setStatus("Pega tu X-RapidAPI-Key y pulsa Guardar."); dom.list.innerHTML=""; return []; }
-    const url = `https://${HOST}/games?live=all`;
-    const r = await fetch(url, { headers: {
-      "X-RapidAPI-Key": key, "X-RapidAPI-Host": HOST, "Accept":"application/json"
-    }});
-    if (!r.ok){
-      const t = await r.text().catch(()=> "");
-      throw new Error(`RapidAPI ${r.status}: ${t.slice(0,180)}`);
-    }
-    const j = await r.json();
-    return Array.isArray(j?.response) ? j.response : [];
-  }
-
-  async function refreshNow(){
-    const start = Date.now();
-    try{
-      setStatus("Actualizando…");
-      let games = await fetchLive();
-      dbg(`Total live recibidos: ${games.length}`);
-      if (dom.onlyFIBA.checked){
-        games = games.filter(g => isFIBA(g.league?.name, g.country?.name || g.league?.country));
-      }
-      if (!games.length){
-        dom.list.innerHTML = `<div class="text-center text-slate-600 py-6">
-          No hay partidos en vivo para el filtro actual.
-        </div>`;
-      } else {
-        dom.list.innerHTML = games.map(g => {
-          g.status = g.status || {}; g.periods = g.periods || {}; g.scores = g.scores || {};
-          return row(g);
-        }).join("");
-      }
-      const ms = Date.now()-start;
-      setStatus(`Actualizado · ${games.length} partidos · ${ms} ms`);
-    } catch(err){
-      dom.list.innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
-        <div class="font-semibold">Error cargando datos</div>
-        <div class="text-sm mt-1 mono">${(err && err.message) || err}</div>
-        <div class="text-xs mt-1 text-red-600">Comprueba tu X-RapidAPI-Key o tu límite del plan.</div>
-      </div>`;
-      setStatus("Error");
-    }
-  }
-
-  // botón manual
-  dom.manual.addEventListener('click', refreshNow);
-});
-</script>
-</body>
-</html>
