@@ -17,11 +17,11 @@
     <header class="mb-4 md:mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
       <div>
         <h1 class="text-2xl md:text-3xl font-bold">FIBA Live Panel — Manual</h1>
-        <p class="text-slate-600 text-sm">Actualiza solo cuando pulses el botón (atajo: tecla <strong>R</strong>).</p>
+        <p class="text-slate-600 text-sm">Pulsa “Actualizar ahora” para pedir datos (atajo: tecla <b>R</b>).</p>
       </div>
       <div class="flex items-center gap-2">
         <input id="apiKey" type="text" placeholder="Pega tu X-RapidAPI-Key" class="px-3 py-2 rounded-lg border w-72" />
-        <button id="saveKey" class="btn bg-black text-white">Guardar clave</button>
+        <button id="saveKey" type="button" class="btn bg-black text-white">Guardar clave</button>
       </div>
     </header>
 
@@ -33,8 +33,8 @@
         <label class="inline-flex items-center gap-2 text-sm">
           <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
         </label>
-        <button id="manualRefresh" class="btn bg-emerald-600 text-white">🔄 Actualizar ahora</button>
-        <span id="status" class="text-sm text-slate-500">Listo. Pulsa “Actualizar ahora”.</span>
+        <button id="manualRefresh" type="button" class="btn bg-emerald-600 text-white">🔄 Actualizar ahora</button>
+        <span id="status" class="text-sm text-slate-500">Listo. Pulsa “Guardar clave”.</span>
       </div>
       <div id="debug" class="mt-2 text-xs text-slate-500"></div>
     </section>
@@ -43,8 +43,17 @@
   </div>
 
 <script>
-// Guarda clave desde ?key= por si no te deja pegar
-(function () {
+// ===== Helper de errores globales para verlos en pantalla =====
+(function(){
+  const q = (sel)=>document.querySelector(sel);
+  window._dbg = (m)=>{ const el=q('#debug'); if(el) el.textContent = String(m); };
+  window.addEventListener('error', e=>{ _dbg('JS error: '+(e.message||e.error||e)); });
+  window.addEventListener('unhandledrejection', e=>{ _dbg('Promise error: '+(e.reason||e)); });
+})();
+
+// ===== App =====
+document.addEventListener('DOMContentLoaded', () => {
+  // guarda clave desde ?key= si viene por URL
   try {
     const qs = new URLSearchParams(location.search);
     const k = qs.get("key") || qs.get("apikey") || qs.get("k");
@@ -52,142 +61,141 @@
       localStorage.setItem("RAPID_KEY", k.trim());
       history.replaceState({}, "", location.origin + location.pathname);
     }
-  } catch (_) {}
-})();
+  } catch {}
 
-const HOST = "api-basketball.p.rapidapi.com";
-const dom = {
-  key: document.getElementById('apiKey'),
-  saveKey: document.getElementById('saveKey'),
-  onlyFIBA: document.getElementById('onlyFIBA'),
-  ultraSafe: document.getElementById('ultraSafe'),
-  status: document.getElementById('status'),
-  debug: document.getElementById('debug'),
-  list: document.getElementById('list'),
-  manual: document.getElementById('manualRefresh'),
-};
+  const HOST = "api-basketball.p.rapidapi.com";
+  const dom = {
+    key: document.getElementById('apiKey'),
+    saveKey: document.getElementById('saveKey'),
+    onlyFIBA: document.getElementById('onlyFIBA'),
+    ultraSafe: document.getElementById('ultraSafe'),
+    status: document.getElementById('status'),
+    debug: document.getElementById('debug'),
+    list: document.getElementById('list'),
+    manual: document.getElementById('manualRefresh'),
+  };
+  const setStatus = (m)=> dom.status.textContent = m;
+  const dbg = (m)=> dom.debug.textContent = String(m||'');
 
-function dbg(msg){ dom.debug.textContent = msg; }
-function setStatus(msg){ dom.status.textContent = msg; }
+  // cargar clave previa
+  dom.key.value = localStorage.getItem('RAPID_KEY') || "";
 
-// Cargar/guardar clave
-dom.key.value = localStorage.getItem('RAPID_KEY') || "";
-dom.saveKey.onclick = () => {
-  localStorage.setItem('RAPID_KEY', dom.key.value.trim());
-  dom.saveKey.textContent = "Guardada ✓";
-  setTimeout(() => dom.saveKey.textContent = "Guardar clave", 1200);
-};
+  // click Guardar clave
+  dom.saveKey.addEventListener('click', () => {
+    const val = (dom.key.value||'').trim();
+    if (!val) { setStatus('Pon tu X-RapidAPI-Key primero'); return; }
+    localStorage.setItem('RAPID_KEY', val);
+    setStatus('Clave guardada ✓');
+  });
 
-// Señal (Modo Ultra Seguro)
-function signal(g, ultra=true){
-  const q = g.periods?.current || null;
-  const t = g.status?.timer || "";
-  const [mm,ss] = (t||"").split(":").map(x=>parseInt(x||"0",10));
-  const h = g.scores?.home?.total ?? 0;
-  const a = g.scores?.away?.total ?? 0;
-  const diff = Math.abs(h-a);
-  const pts = h + a;
-  const fast = pts >= 150;
+  // atajo R = actualizar
+  window.addEventListener('keydown', e => {
+    if ((e.key||'').toLowerCase()==='r') dom.manual.click();
+  });
 
-  const short = (g.status?.short||"").toUpperCase();
-  if (!(q===4 || short==="OT")) return {tag:"ESPERA", reason:"Solo Q4/OT"};
-  if (!isNaN(mm) && mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
-  const need = fast ? 12 : 10;
-  if (diff >= need) return {tag:"ENTRA", reason:`Ventaja ${diff} (${fast?"rápido":"lento"})`};
-  return {tag:"ESPERA", reason:`Ventaja ${diff} < ${need}`};
-}
-
-function isFIBA(league, country){
-  const L = (league||"").toLowerCase();
-  const C = (country||"").toLowerCase();
-  return L.includes("fiba") || C.includes("international") || C.includes("world");
-}
-
-function row(g){
-  const h = g.scores?.home?.total ?? 0;
-  const a = g.scores?.away?.total ?? 0;
-  const s = signal(g, dom.ultraSafe.checked);
-  const sigColor = s.tag==="ENTRA" ? "bg-emerald-600" : s.tag==="ESPERA" ? "bg-amber-600" : "bg-slate-600";
-  const period = g.periods?.current ? `Q${g.periods.current}` : (g.status?.short || g.status?.long || "");
-  return `<div class="card p-3 bg-white">
-    <div class="grid md:grid-cols-6 gap-2 items-center">
-      <div class="md:col-span-2">
-        <div class="text-xs text-slate-500">${(g.country?.name||g.league?.country||"").toUpperCase()}</div>
-        <div class="font-semibold">${g.league?.name||""}</div>
-      </div>
-      <div>
-        <div class="font-semibold">${g.teams?.home?.name||""}</div>
-        <div class="text-slate-600">${g.teams?.away?.name||""}</div>
-      </div>
-      <div class="text-center">
-        <div class="text-2xl font-bold mono">${h} - ${a}</div>
-      </div>
-      <div class="text-sm">
-        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Período</span> <span class="mono">${period}</span></div>
-        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Reloj</span> <span class="mono">${g.status?.timer || "-"}</span></div>
-      </div>
-      <div>
-        <span class="inline-block px-2 py-1 rounded text-white ${sigColor}">${s.tag}</span>
-        <div class="text-slate-700 text-sm mt-1">${s.reason}</div>
-      </div>
-    </div>
-  </div>`;
-}
-
-async function fetchLive(){
-  const key = (localStorage.getItem('RAPID_KEY') || "").trim();
-  if (!key){ setStatus("Pega tu X-RapidAPI-Key y pulsa Guardar."); dom.list.innerHTML=""; return []; }
-  const url = `https://${HOST}/games?live=all`;
-  const r = await fetch(url, { headers: {
-    "X-RapidAPI-Key": key, "X-RapidAPI-Host": HOST, "Accept":"application/json"
-  }});
-  if (!r.ok){
-    const t = await r.text().catch(()=> "");
-    throw new Error(`RapidAPI ${r.status}: ${t.slice(0,180)}`);
+  function isFIBA(league, country){
+    const L = (league||"").toLowerCase();
+    const C = (country||"").toLowerCase();
+    return L.includes("fiba") || C.includes("international") || C.includes("world");
   }
-  const j = await r.json();
-  return Array.isArray(j?.response) ? j.response : [];
-}
 
-async function refreshNow(){
-  const start = Date.now();
-  try{
-    setStatus("Actualizando…");
-    let games = await fetchLive();
-    dbg(`Total live recibidos: ${games.length}`);
-    if (dom.onlyFIBA.checked){
-      games = games.filter(g => isFIBA(g.league?.name, g.country?.name || g.league?.country));
-    }
-    if (!games.length){
-      dom.list.innerHTML = `<div class="text-center text-slate-600 py-6">
-        No hay partidos en vivo para el filtro actual.
-        <button id="showAll" class="ml-2 underline">Ver todos</button>
-      </div>`;
-      const btn = document.getElementById('showAll');
-      if (btn) btn.onclick = () => { dom.onlyFIBA.checked = false; refreshNow(); };
-    } else {
-      dom.list.innerHTML = games.map(g => {
-        g.status = g.status || {}; g.periods = g.periods || {}; g.scores = g.scores || {};
-        return row(g);
-      }).join("");
-    }
-    const ms = Date.now()-start;
-    setStatus(`Actualizado · ${games.length} partidos · ${ms} ms`);
-  } catch(err){
-    dom.list.innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
-      <div class="font-semibold">Error cargando datos</div>
-      <div class="text-sm mt-1 mono">${(err && err.message) || err}</div>
-      <div class="text-xs mt-1 text-red-600">Comprueba tu X-RapidAPI-Key o tu límite del plan.</div>
+  function signal(g, ultra=true){
+    const q = g.periods?.current || null;
+    const t = g.status?.timer || "";
+    const [mm] = (t||"").split(":").map(x=>parseInt(x||"0",10));
+    const h = g.scores?.home?.total ?? 0;
+    const a = g.scores?.away?.total ?? 0;
+    const diff = Math.abs(h-a);
+    const pts = h + a;
+    const fast = pts >= 150;
+    const short = (g.status?.short||"").toUpperCase();
+    if (!(q===4 || short==="OT")) return {tag:"ESPERA", reason:"Solo Q4/OT"};
+    if (!isNaN(mm) && mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
+    const need = fast ? 12 : 10;
+    if (diff >= need) return {tag:"ENTRA", reason:`Ventaja ${diff} (${fast?"rápido":"lento"})`};
+    return {tag:"ESPERA", reason:`Ventaja ${diff} < ${need}`};
+  }
+
+  function row(g){
+    const h = g.scores?.home?.total ?? 0;
+    const a = g.scores?.away?.total ?? 0;
+    const s = signal(g, dom.ultraSafe.checked);
+    const sigColor = s.tag==="ENTRA" ? "bg-emerald-600" : s.tag==="ESPERA" ? "bg-amber-600" : "bg-slate-600";
+    const period = g.periods?.current ? `Q${g.periods.current}` : (g.status?.short || g.status?.long || "");
+    return `<div class="card p-3 bg-white">
+      <div class="grid md:grid-cols-6 gap-2 items-center">
+        <div class="md:col-span-2">
+          <div class="text-xs text-slate-500">${(g.country?.name||g.league?.country||"").toUpperCase()}</div>
+          <div class="font-semibold">${g.league?.name||""}</div>
+        </div>
+        <div>
+          <div class="font-semibold">${g.teams?.home?.name||""}</div>
+          <div class="text-slate-600">${g.teams?.away?.name||""}</div>
+        </div>
+        <div class="text-center">
+          <div class="text-2xl font-bold mono">${h} - ${a}</div>
+        </div>
+        <div class="text-sm">
+          <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Período</span> <span class="mono">${period}</span></div>
+          <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Reloj</span> <span class="mono">${g.status?.timer || "-"}</span></div>
+        </div>
+        <div>
+          <span class="inline-block px-2 py-1 rounded text-white ${sigColor}">${s.tag}</span>
+          <div class="text-slate-700 text-sm mt-1">${s.reason}</div>
+        </div>
+      </div>
     </div>`;
-    setStatus("Error");
   }
-}
 
-// Sin auto-refresh: solo manual
-dom.manual.onclick = refreshNow;
-// Atajo: tecla R
-window.addEventListener('keydown', e => {
-  if ((e.key||"").toLowerCase()==='r') refreshNow();
+  async function fetchLive(){
+    const key = (localStorage.getItem('RAPID_KEY') || "").trim();
+    if (!key){ setStatus("Pega tu X-RapidAPI-Key y pulsa Guardar."); dom.list.innerHTML=""; return []; }
+    const url = `https://${HOST}/games?live=all`;
+    const r = await fetch(url, { headers: {
+      "X-RapidAPI-Key": key, "X-RapidAPI-Host": HOST, "Accept":"application/json"
+    }});
+    if (!r.ok){
+      const t = await r.text().catch(()=> "");
+      throw new Error(`RapidAPI ${r.status}: ${t.slice(0,180)}`);
+    }
+    const j = await r.json();
+    return Array.isArray(j?.response) ? j.response : [];
+  }
+
+  async function refreshNow(){
+    const start = Date.now();
+    try{
+      setStatus("Actualizando…");
+      let games = await fetchLive();
+      dbg(`Total live recibidos: ${games.length}`);
+      if (dom.onlyFIBA.checked){
+        games = games.filter(g => isFIBA(g.league?.name, g.country?.name || g.league?.country));
+      }
+      if (!games.length){
+        dom.list.innerHTML = `<div class="text-center text-slate-600 py-6">
+          No hay partidos en vivo para el filtro actual.
+        </div>`;
+      } else {
+        dom.list.innerHTML = games.map(g => {
+          g.status = g.status || {}; g.periods = g.periods || {}; g.scores = g.scores || {};
+          return row(g);
+        }).join("");
+      }
+      const ms = Date.now()-start;
+      setStatus(`Actualizado · ${games.length} partidos · ${ms} ms`);
+    } catch(err){
+      dom.list.innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
+        <div class="font-semibold">Error cargando datos</div>
+        <div class="text-sm mt-1 mono">${(err && err.message) || err}</div>
+        <div class="text-xs mt-1 text-red-600">Comprueba tu X-RapidAPI-Key o tu límite del plan.</div>
+      </div>`;
+      setStatus("Error");
+    }
+  }
+
+  // botón manual
+  dom.manual.addEventListener('click', refreshNow);
 });
-setStatus('Listo. Pulsa “Actualiza
-
+</script>
+</body>
+</html>
