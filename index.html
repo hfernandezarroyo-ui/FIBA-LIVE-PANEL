@@ -17,7 +17,7 @@
     <header class="mb-4 md:mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
       <div>
         <h1 class="text-2xl md:text-3xl font-bold">Basket Live — Bet365 / API-Basketball</h1>
-        <p class="text-slate-600 text-sm">Actualización manual. Selector de proveedor. Señal ENTRA/ESPERA (ultra segura).</p>
+        <p class="text-slate-600 text-sm">Actualización manual. Selector de proveedor. Señal ENTRA/ESPERA.</p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <select id="provider" class="px-3 py-2 rounded-lg border">
@@ -25,62 +25,12 @@
           <option value="apisports">API-Basketball (RapidAPI)</option>
         </select>
         <input id="apiKey" type="text" placeholder="Pega tu TOKEN/KEY según proveedor" class="px-3 py-2 rounded-lg border w-72" />
-        <button id="saveKey" type="button" class="btn bg-black text-white">Guardar clave</button>
+        <!-- Fallback onclicks por si fallan listeners -->
+        <button id="saveKey" type="button" class="btn bg-black text-white"
+                onclick="window.__app && window.__app.saveKey()">Guardar clave</button>
       </div>
     </header>
 
     <section class="card bg-white p-3 md:p-4 mb-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <label class="inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" id="onlyFIBA" checked /> Solo FIBA/Internacionales
-        </label>
-        <label class="inline-flex items-center gap-2 text-sm">
-          <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
-        </label>
-        <button id="manualRefresh" type="button" class="btn bg-emerald-600 text-white">🔄 Actualizar ahora</button>
-        <span id="status" class="text-sm text-slate-500">Listo. Selecciona proveedor, pega clave y pulsa “Guardar clave”.</span>
-      </div>
-      <div id="debug" class="mt-2 text-xs text-slate-500"></div>
-    </section>
-
-    <section id="list" class="space-y-3"></section>
-  </div>
-
-<script>
-/* ===== Helpers de estado/errores ===== */
-const dom = {
-  provider: document.getElementById('provider'),
-  key: document.getElementById('apiKey'),
-  saveKey: document.getElementById('saveKey'),
-  onlyFIBA: document.getElementById('onlyFIBA'),
-  ultraSafe: document.getElementById('ultraSafe'),
-  manual: document.getElementById('manualRefresh'),
-  status: document.getElementById('status'),
-  debug: document.getElementById('debug'),
-  list: document.getElementById('list'),
-};
-const setStatus = (m)=> dom.status.textContent = m;
-const dbg = (m)=> dom.debug.textContent = String(m||'');
-
-/* ===== Persistencia de proveedor + clave ===== */
-function storageKeyForProvider(p){ return p === 'betsapi' ? 'KEY_BETSAPI' : 'KEY_APISPORTS'; }
-function loadKey(){
-  const p = dom.provider.value;
-  const k = localStorage.getItem(storageKeyForProvider(p)) || '';
-  dom.key.value = k;
-}
-function saveKey(){
-  const p = dom.provider.value;
-  localStorage.setItem(storageKeyForProvider(p), (dom.key.value||'').trim());
-  setStatus('Clave guardada ✓');
-}
-
-/* ===== Señal (ultra segura) ===== */
-function signal(g, ultra=true){
-  const q = g.periods?.current || null;
-  const t = g.status?.timer || "";
-  const [mm] = (t||"").split(":").map(x=>parseInt(x||"0",10));
-  const h = g.scores?.home?.total ?? 0;
-  const a = g.scores?.away?.total ?? 0;
-  const di
+      <div class="flex
 
