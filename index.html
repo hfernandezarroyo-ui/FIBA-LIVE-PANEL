@@ -20,17 +20,203 @@
         <p class="text-slate-600 text-sm">Actualización manual. Selector de proveedor. Señal ENTRA/ESPERA.</p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <select id="provider" class="px-3 py-2 rounded-lg border">
+        <select id="provider" class="px-3 py-2 rounded-lg border" onchange="loadKey()">
           <option value="betsapi" selected>BetsAPI (Bet365)</option>
           <option value="apisports">API-Basketball (RapidAPI)</option>
         </select>
-        <input id="apiKey" type="text" placeholder="Pega tu TOKEN/KEY según proveedor" class="px-3 py-2 rounded-lg border w-72" />
-        <!-- Fallback onclicks por si fallan listeners -->
-        <button id="saveKey" type="button" class="btn bg-black text-white"
-                onclick="window.__app && window.__app.saveKey()">Guardar clave</button>
+
+        <input id="apiKey" type="text" placeholder="Pega tu TOKEN/KEY según proveedor" class="px-3 py-2 rounded-lg border w-80" />
+
+        <!-- GUARDA CLAVE (inline, siempre funciona) -->
+        <button class="btn bg-black text-white"
+          onclick="(function(){const p=document.getElementById('provider').value;
+                   const k=(document.getElementById('apiKey').value||'').trim();
+                   localStorage.setItem(p==='betsapi'?'KEY_BETSAPI':'KEY_APISPORTS',k);
+                   document.getElementById('status').textContent='Clave guardada ✓';
+          })();">
+          Guardar clave
+        </button>
+
+        <!-- ACTUALIZAR (inline) -->
+        <button class="btn bg-emerald-600 text-white" onclick="manualRefresh()">🔄 Actualizar ahora</button>
       </div>
     </header>
 
     <section class="card bg-white p-3 md:p-4 mb-3">
-      <div class="flex
+      <div class="flex flex-wrap items-center gap-3">
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" id="onlyFIBA" checked /> Solo FIBA/Internacionales
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
+        </label>
+        <span id="status" class="text-sm text-slate-500">Listo. Guarda clave y pulsa “Actualizar”.</span>
+      </div>
+      <pre id="debug" class="mt-2 text-xs text-slate-500 whitespace-pre-wrap"></pre>
+    </section>
+
+    <section id="list" class="space-y-3"></section>
+  </div>
+
+<script>
+/* ===== Utilidades UI ===== */
+const el = s => document.querySelector(s);
+const setStatus = m => el('#status').textContent = m||'';
+const dbg = m => el('#debug').textContent = (m==null?'':String(m));
+
+/* ===== Carga/guardado de claves por proveedor ===== */
+function storageKeyForProvider(p){ return p==='betsapi' ? 'KEY_BETSAPI' : 'KEY_APISPORTS'; }
+function loadKey(){
+  const p = el('#provider').value;
+  el('#apiKey').value = localStorage.getItem(storageKeyForProvider(p)) || '';
+}
+// cargar al abrir
+loadKey();
+
+/* ===== Señal ENTRA/ESPERA (ultra segura) ===== */
+function signal(g, ultra=true){
+  const q = g.periods?.current || null;
+  const t = g.status?.timer || "";
+  const [mm] = (t||"").split(":").map(x=>parseInt(x||"0",10));
+  const h = g.scores?.home?.total ?? 0;
+  const a = g.scores?.away?.total ?? 0;
+  const diff = Math.abs(h-a);
+  const pts = h + a;
+  const fast = pts >= 150;
+  const short = (g.status?.short||"").toUpperCase();
+  if (!(q===4 || short==="OT")) return {tag:"ESPERA", reason:"Solo Q4/OT"};
+  if (!isNaN(mm) && mm > 8) return {tag:"ESPERA", reason:"Esperar últimos 8:00"};
+  const need = fast ? 12 : 10;
+  if (diff >= need) return {tag:"ENTRA", reason:`Ventaja ${diff} (${fast?"rápido":"lento"})`};
+  return {tag:"ESPERA", reason:`Ventaja ${diff} < ${need}`};
+}
+function isFIBA(league, country){
+  const L = (league||"").toLowerCase();
+  const C = (country||"").toLowerCase();
+  return L.includes("fiba") || C.includes("international") || C.includes("world");
+}
+function row(g){
+  const h = g.scores?.home?.total ?? 0;
+  const a = g.scores?.away?.total ?? 0;
+  const s = signal(g, el('#ultraSafe').checked);
+  const sigColor = s.tag==="ENTRA" ? "bg-emerald-600" : s.tag==="ESPERA" ? "bg-amber-600" : "bg-slate-600";
+  const period = g.periods?.current ? `Q${g.periods.current}` : (g.status?.short || g.status?.long || "");
+  return `<div class="card p-3 bg-white">
+    <div class="grid md:grid-cols-6 gap-2 items-center">
+      <div class="md:col-span-2">
+        <div class="text-xs text-slate-500">${(g.country?.name||g.league?.country||"").toUpperCase()}</div>
+        <div class="font-semibold">${g.league?.name||""}</div>
+      </div>
+      <div>
+        <div class="font-semibold">${g.teams?.home?.name||""}</div>
+        <div class="text-slate-600">${g.teams?.away?.name||""}</div>
+      </div>
+      <div class="text-center">
+        <div class="text-2xl font-bold mono">${h} - ${a}</div>
+      </div>
+      <div class="text-sm">
+        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Período</span> <span class="mono">${period}</span></div>
+        <div><span class="bg-slate-200 px-1.5 py-0.5 rounded">Reloj</span> <span class="mono">${g.status?.timer || "-"}</span></div>
+      </div>
+      <div>
+        <span class="inline-block px-2 py-1 rounded text-white ${sigColor}">${s.tag}</span>
+        <div class="text-slate-700 text-sm mt-1">${s.reason}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ===== Normalizadores y llamadas de cada proveedor ===== */
+// ---- BetsAPI (Bet365) ----
+function parseScore(ss){ if(!ss) return {home:0,away:0}; const m = ss.split('-').map(x=>parseInt(x||'0',10)); return {home:m[0]||0, away:m[1]||0}; }
+function normalizeBets(it){
+  const league = it?.league?.name || it?.league?.name_short || '';
+  const home = it?.home?.name || it?.home?.name_short || '';
+  const away = it?.away?.name || it?.away?.name_short || '';
+  const {home:sh, away:sa} = parseScore(it?.ss);
+  const timer = (it?.timer && it.timer.tm!=null && it.timer.ts!=null)
+        ? `${String(it.timer.tm).padStart(2,'0')}:${String(it.timer.ts).padStart(2,'0')}`
+        : (it?.timer?.tt || '');
+  const short = (it?.time || '').toUpperCase();
+  let current = null;
+  if(short.startsWith('Q')) current = parseInt(short.slice(1),10);
+  if(short === 'OT') current = 4;
+  return {
+    id: it?.id,
+    league: { name: league, country: '' },
+    country: { name: '' },
+    teams: { home: { name: home }, away: { name: away } },
+    scores: { home: { total: sh }, away: { total: sa } },
+    status: { short, timer },
+    periods: { current }
+  };
+}
+async function fetchLiveBets(){
+  const token = (localStorage.getItem('KEY_BETSAPI')||'').trim();
+  if(!token) throw new Error("Falta token de BetsAPI. Selecciona BetsAPI, pega tu token y pulsa Guardar clave.");
+  const url = `https://api.b365api.com/v1/bet365/inplay_filter?sport_id=18&token=${encodeURIComponent(token)}`;
+  const r = await fetch(url, { headers:{Accept:'application/json'} });
+  if(!r.ok){ const t = await r.text().catch(()=> ""); throw new Error(`BetsAPI ${r.status}: ${t.slice(0,200)}`); }
+  const j = await r.json();
+  const arr = Array.isArray(j?.results) ? j.results : [];
+  const live = arr.filter(it => String(it?.time_status) === "1");
+  return live.map(normalizeBets);
+}
+
+// ---- API-Basketball (RapidAPI) ----
+const API_HOST = "api-basketball.p.rapidapi.com";
+function normalizeApiSports(g){
+  return {
+    id: g.id,
+    league: { name: g.league?.name || "", country: g.league?.country || "" },
+    country: { name: g.country?.name || g.league?.country || "" },
+    teams: { home: { name: g.teams?.home?.name||"" }, away: { name: g.teams?.away?.name||"" } },
+    scores: { home: { total: g.scores?.home?.total ?? 0 }, away: { total: g.scores?.away?.total ?? 0 } },
+    status: { short: g.status?.short || g.status?.long || "", timer: g.status?.timer || "" },
+    periods: { current: g.periods?.current || null }
+  };
+}
+async function fetchLiveApiSports(){
+  const key = (localStorage.getItem('KEY_APISPORTS')||'').trim();
+  if(!key) throw new Error("Falta X-RapidAPI-Key de API-Basketball. Selecciona API-Basketball, pega tu key y pulsa Guardar clave.");
+  const url = `https://${API_HOST}/games?live=all`;
+  const r = await fetch(url, { headers:{
+    "X-RapidAPI-Key": key, "X-RapidAPI-Host": API_HOST, "Accept":"application/json"
+  }});
+  if(!r.ok){ const t = await r.text().catch(()=> ""); throw new Error(`API-Basketball ${r.status}: ${t.slice(0,200)}`); }
+  const j = await r.json();
+  const arr = Array.isArray(j?.response) ? j.response : [];
+  return arr.map(normalizeApiSports);
+}
+
+/* ===== Acción “Actualizar ahora” (global, la llama el button inline) ===== */
+async function manualRefresh(){
+  try{
+    setStatus("Actualizando…"); dbg("");
+    const prov = el('#provider').value;
+    let games = prov === 'betsapi' ? await fetchLiveBets() : await fetchLiveApiSports();
+    if (el('#onlyFIBA').checked){
+      games = games.filter(g => isFIBA(g.league?.name, g.country?.name || g.league?.country));
+    }
+    if (!games.length){
+      el('#list').innerHTML = `<div class="text-center text-slate-600 py-6">
+        No hay partidos en vivo para el filtro actual.
+      </div>`;
+    } else {
+      el('#list').innerHTML = games.map(row).join("");
+    }
+    setStatus(`Actualizado · ${games.length} partidos`);
+  }catch(err){
+    el('#list').innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
+      <div class="font-semibold">Error cargando datos</div>
+      <div class="text-sm mt-1 mono">${(err && err.message) || err}</div>
+      <div class="text-xs mt-1 text-red-600">Comprueba tu clave/token o el límite del plan.</div>
+    </div>`;
+    setStatus("Error");
+    dbg(err && err.stack ? err.stack : String(err));
+  }
+}
+</script>
+</body>
+</html>
 
