@@ -3,24 +3,25 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FIBA Live Panel — Ultra Seguro</title>
+  <title>FIBA Live Panel — Manual</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; }
     .card { border-radius: 14px; box-shadow: 0 8px 20px rgba(0,0,0,.07); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .btn { padding: .6rem 1rem; border-radius: .75rem; font-weight: 600; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div class="max-w-5xl mx-auto p-4 md:p-6">
     <header class="mb-4 md:mb-6 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
       <div>
-        <h1 class="text-2xl md:text-3xl font-bold">FIBA Live Panel — Ultra Seguro</h1>
-        <p class="text-slate-600 text-sm">Partidos en directo + señal “ENTRA / ESPERA”.</p>
+        <h1 class="text-2xl md:text-3xl font-bold">FIBA Live Panel — Manual</h1>
+        <p class="text-slate-600 text-sm">Actualiza solo cuando pulses el botón (atajo: tecla <strong>R</strong>).</p>
       </div>
       <div class="flex items-center gap-2">
         <input id="apiKey" type="text" placeholder="Pega tu X-RapidAPI-Key" class="px-3 py-2 rounded-lg border w-72" />
-        <button id="saveKey" class="px-4 py-2 rounded-lg bg-black text-white">Guardar clave</button>
+        <button id="saveKey" class="btn bg-black text-white">Guardar clave</button>
       </div>
     </header>
 
@@ -32,16 +33,8 @@
         <label class="inline-flex items-center gap-2 text-sm">
           <input type="checkbox" id="ultraSafe" checked /> Modo Ultra Seguro
         </label>
-        <div class="flex items-center gap-2 text-sm">
-          <span>Refresco</span>
-          <select id="refresh" class="border rounded px-2 py-1">
-            <option value="8">8s</option>
-            <option value="10" selected>10s</option>
-            <option value="15">15s</option>
-            <option value="20">20s</option>
-          </select>
-        </div>
-        <span id="status" class="text-sm text-slate-500">—</span>
+        <button id="manualRefresh" class="btn bg-emerald-600 text-white">🔄 Actualizar ahora</button>
+        <span id="status" class="text-sm text-slate-500">Listo. Pulsa “Actualizar ahora”.</span>
       </div>
       <div id="debug" class="mt-2 text-xs text-slate-500"></div>
     </section>
@@ -50,7 +43,7 @@
   </div>
 
 <script>
-// guarda clave desde ?key= por si no te deja pegar
+// Guarda clave desde ?key= por si no te deja pegar
 (function () {
   try {
     const qs = new URLSearchParams(location.search);
@@ -68,25 +61,24 @@ const dom = {
   saveKey: document.getElementById('saveKey'),
   onlyFIBA: document.getElementById('onlyFIBA'),
   ultraSafe: document.getElementById('ultraSafe'),
-  refresh: document.getElementById('refresh'),
   status: document.getElementById('status'),
   debug: document.getElementById('debug'),
   list: document.getElementById('list'),
+  manual: document.getElementById('manualRefresh'),
 };
 
 function dbg(msg){ dom.debug.textContent = msg; }
 function setStatus(msg){ dom.status.textContent = msg; }
 
-// carga/guarda clave
+// Cargar/guardar clave
 dom.key.value = localStorage.getItem('RAPID_KEY') || "";
 dom.saveKey.onclick = () => {
   localStorage.setItem('RAPID_KEY', dom.key.value.trim());
   dom.saveKey.textContent = "Guardada ✓";
   setTimeout(() => dom.saveKey.textContent = "Guardar clave", 1200);
-  refreshNow();
 };
 
-// señal ultra segura
+// Señal (Modo Ultra Seguro)
 function signal(g, ultra=true){
   const q = g.periods?.current || null;
   const t = g.status?.timer || "";
@@ -175,13 +167,12 @@ async function refreshNow(){
       if (btn) btn.onclick = () => { dom.onlyFIBA.checked = false; refreshNow(); };
     } else {
       dom.list.innerHTML = games.map(g => {
-        // normalizado mínimo
         g.status = g.status || {}; g.periods = g.periods || {}; g.scores = g.scores || {};
         return row(g);
       }).join("");
     }
     const ms = Date.now()-start;
-    setStatus(`Última actualización: ahora · ${games.length} partidos · ${ms} ms`);
+    setStatus(`Actualizado · ${games.length} partidos · ${ms} ms`);
   } catch(err){
     dom.list.innerHTML = `<div class="card bg-red-50 p-4 text-red-700">
       <div class="font-semibold">Error cargando datos</div>
@@ -192,18 +183,11 @@ async function refreshNow(){
   }
 }
 
-let timer = null;
-function startLoop(){
-  if (timer) clearInterval(timer);
-  const s = Math.max(5, parseInt(dom.refresh.value||"10",10))*1000;
-  timer = setInterval(refreshNow, s);
-}
-dom.refresh.onchange = startLoop;
-dom.onlyFIBA.onchange = refreshNow;
-dom.ultraSafe.onchange = refreshNow;
+// Sin auto-refresh: solo manual
+dom.manual.onclick = refreshNow;
+// Atajo: tecla R
+window.addEventListener('keydown', e => {
+  if ((e.key||"").toLowerCase()==='r') refreshNow();
+});
+setStatus('Listo. Pulsa “Actualiza
 
-dom.key.value && refreshNow();
-startLoop();
-</script>
-</body>
-</html>
